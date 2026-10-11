@@ -17,9 +17,6 @@ class Agent:
         You can declare any required instance variables here,
         but the state for each new map should be reinitialized in reset().
         """
-        # ``reset`` owns map-specific state.  Initialising these attributes
-        # here as well makes an accidentally early call to ``act`` easier to
-        # diagnose and keeps the object in a consistent state.
         self.rows = 0
         self.cols = 0
         self.start_position = None
@@ -38,8 +35,6 @@ class Agent:
         self.rows = rows
         self.cols = cols
         self.start_position = tuple(start_position)
-        # Maps a coordinate to its observed type ("FREE", "WALL", or
-        # "GOAL").  Only cells adjacent to a visited cell can be known.
         self.internalMap = {self.start_position: "FREE"}
         self.visited = set()
 
@@ -78,52 +73,48 @@ class Agent:
             if neighbors[action] == "GOAL":
                 return action
 
-        # A frontier is a cell known to be FREE but not yet visited.  BFS over
-        # the already visited, known-free region finds the closest frontier;
-        # therefore the returned move is the first step of a shortest known
-        # route to new information.
+        # 找尋鄰居有 FREE 並且還沒走過的格子
         action = self._next_action_to_nearest_frontier(position)
         if action is not None:
             return action
 
-        # A valid map has a reachable goal, so this fallback is not expected
-        # in normal grading.  Prefer any known-free action to avoid a wall
-        # collision if an invalid/disconnected test map is supplied.
+        # 防呆
         for action in MOVES:
             if neighbors[action] == "FREE":
                 return action
         return next(iter(MOVES))
 
     def _next_action_to_nearest_frontier(self, start):
-        """Find the first action on a shortest known path to a frontier.
-
-        BFS only traverses visited cells.  An unvisited FREE cell is accepted
-        as an endpoint, never as an intermediate node, so every planned move
-        is through space already confirmed to be traversable.
-        """
         queue = deque([start])
-        came_from = {start: (None, None)}
+        cameFrom = {start: (None, None)}
 
         while queue:
             current = queue.popleft()
             for action, (row, column) in MOVES.items():
                 neighbor = (current[0] + row, current[1] + column)
+
+                # 鄰居不可走
                 if self.internalMap.get(neighbor) != "FREE":
                     continue
 
+                # 可走 還沒走過 找到 Frontier
                 if neighbor not in self.visited:
-                    # Reconstruct only the first action, avoiding an
-                    # unnecessary persistent plan after new observations.
-                    route_actions = [action]
+                    # 記錄走到 Frontier 的最後一步
+                    routeActions = [action]
                     cursor = current
-                    while cursor != start:
-                        parent, parent_action = came_from[cursor]
-                        route_actions.append(parent_action)
-                        cursor = parent
-                    return route_actions[-1]
 
-                if neighbor not in came_from:
-                    came_from[neighbor] = (current, action)
+                    # 沿著 BFS 的父節點一路回推到當前點
+                    while cursor != start:
+                        parent, parentAction = cameFrom[cursor]
+                        routeActions.append(parentAction)
+                        cursor = parent
+                    # 回傳從當前點出發的第一步
+                    return routeActions[-1]
+
+                # 鄰居已走過 並且本次 BFS 尚未搜尋過 加入佇列繼續往外擴展
+                if neighbor not in cameFrom:
+                    cameFrom[neighbor] = (current, action)
                     queue.append(neighbor)
 
+        # 所有已走訪區域都搜尋完 沒有 Frontier 可以走
         return None
