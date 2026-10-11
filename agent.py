@@ -1,5 +1,7 @@
 """Starter code for the Unknown-Map Exploration Agent assignment."""
 
+from collections import deque
+
 MOVES = {
     "UP": (-1, 0),
     "DOWN": (1, 0),
@@ -21,9 +23,8 @@ class Agent:
         self.rows = 0
         self.cols = 0
         self.start_position = None
-        self.internal_map = {}
+        self.internalMap = {}
         self.visited = set()
-        self.path = []
 
     def reset(self, rows, cols, start_position):
         """
@@ -39,11 +40,8 @@ class Agent:
         self.start_position = tuple(start_position)
         # Maps a coordinate to its observed type ("FREE", "WALL", or
         # "GOAL").  Only cells adjacent to a visited cell can be known.
-        self.internal_map = {self.start_position: "FREE"}
+        self.internalMap = {self.start_position: "FREE"}
         self.visited = set()
-        # The current DFS branch, from the start through the agent's current
-        # position.  It gives a safe route for backtracking from dead ends.
-        self.path = []
 
     def act(self, percept):
         """
@@ -68,46 +66,25 @@ class Agent:
         neighbors = percept["neighbors"]
 
         self.visited.add(position)
-        self.internal_map[position] = "FREE"
+        self.internalMap[position] = "FREE"
 
-        # Record every observation.  This lets the agent distinguish a wall
-        # from an unvisited, traversable neighbour without probing walls.
-        for action, (dr, dc) in MOVES.items():
-            neighbor = (position[0] + dr, position[1] + dc)
-            self.internal_map[neighbor] = neighbors[action]
+        # 更新 internal map 地圖資訊
+        for action, (row, column) in MOVES.items():
+            neighbor = (position[0] + row, position[1] + column)
+            self.internalMap[neighbor] = neighbors[action]
 
-        # A goal is always reached as soon as it becomes visible.  Checking
-        # this before exploration avoids needless detours beside the goal.
-        for action in MOVES:
+        # 找尋鄰居有 GOAL 直接結束
+        for action in MOVES.keys():
             if neighbors[action] == "GOAL":
                 return action
 
-        # Maintain the DFS branch.  Under the supplied deterministic
-        # environment the position is normally its last element.  The small
-        # recovery path also makes the state safe if this agent is inspected
-        # or reused with an externally repositioned environment.
-        if not self.path:
-            self.path = [position]
-        elif self.path[-1] != position:
-            if position in self.path:
-                self.path = self.path[: self.path.index(position) + 1]
-            else:
-                self.path = [position]
-
-        # Descend into an unvisited open cell.  Since its state was reported
-        # as FREE, this action cannot collide with a wall.
-        for action, (dr, dc) in MOVES.items():
-            neighbor = (position[0] + dr, position[1] + dc)
-            if neighbors[action] == "FREE" and neighbor not in self.visited:
-                self.path.append(neighbor)
-                return action
-
-        # All children of this DFS node have been explored.  Return along the
-        # recorded branch; this is also a known-free move and cannot collide.
-        if len(self.path) > 1:
-            parent = self.path[-2]
-            self.path.pop()
-            return self._action_to(position, parent)
+        # A frontier is a cell known to be FREE but not yet visited.  BFS over
+        # the already visited, known-free region finds the closest frontier;
+        # therefore the returned move is the first step of a shortest known
+        # route to new information.
+        action = self._next_action_to_nearest_frontier(position)
+        if action is not None:
+            return action
 
         # A valid map has a reachable goal, so this fallback is not expected
         # in normal grading.  Prefer any known-free action to avoid a wall
@@ -117,11 +94,36 @@ class Agent:
                 return action
         return next(iter(MOVES))
 
-    @staticmethod
-    def _action_to(source, target):
-        """Return the action that moves from adjacent ``source`` to ``target``."""
-        delta = (target[0] - source[0], target[1] - source[1])
-        for action, move in MOVES.items():
-            if move == delta:
-                return action
-        raise ValueError(f"Cells are not adjacent: {source!r}, {target!r}")
+    def _next_action_to_nearest_frontier(self, start):
+        """Find the first action on a shortest known path to a frontier.
+
+        BFS only traverses visited cells.  An unvisited FREE cell is accepted
+        as an endpoint, never as an intermediate node, so every planned move
+        is through space already confirmed to be traversable.
+        """
+        queue = deque([start])
+        came_from = {start: (None, None)}
+
+        while queue:
+            current = queue.popleft()
+            for action, (row, column) in MOVES.items():
+                neighbor = (current[0] + row, current[1] + column)
+                if self.internalMap.get(neighbor) != "FREE":
+                    continue
+
+                if neighbor not in self.visited:
+                    # Reconstruct only the first action, avoiding an
+                    # unnecessary persistent plan after new observations.
+                    route_actions = [action]
+                    cursor = current
+                    while cursor != start:
+                        parent, parent_action = came_from[cursor]
+                        route_actions.append(parent_action)
+                        cursor = parent
+                    return route_actions[-1]
+
+                if neighbor not in came_from:
+                    came_from[neighbor] = (current, action)
+                    queue.append(neighbor)
+
+        return None
